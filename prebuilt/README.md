@@ -1,9 +1,12 @@
-# Prebuilts — LineageOS 23.2 (Android 16 QPR2)
+# Prebuilts — xpeng on the 5.10 kernel
 
 | File | Source |
 |------|--------|
-| `kernel` | Official LOS `boot.img` — `Linux 5.4.302-moto-g057847a8c116` (must match `vendor/lib/modules` vermagic; do **not** use a phone-pulled `*-dirty` boot kernel) |
-| `dtbo.img` | LOS `dtbo.img` (flash separately; not embedded in boot) |
-| `dtb` | LOS `vendor_boot` DTB blob (reference) |
+| `kernel` | `boot.img` of the xpeng 5.10 port — `Linux 5.10.269-moto-gc316414457ff-dirty` (#47). Must be the exact kernel the flashed `vendor_boot` / `vendor_dlkm` modules were built for (modversions). |
+| `dtbo.img` | `dtbo.img` of the 5.10 port (flash separately; not embedded in boot) |
+| `dtb` | `vendor_boot` DTB of the 5.10 port (reference only; the bootloader reads it from vendor_boot) |
 
-Nightly: **lineage-23.2-20260808-nightly-xpeng**
+No kernel modules are shipped here any more. Recovery modules come from the
+5.10 `vendor_boot` (`/lib/modules`, loaded by first-stage init from
+`modules.load.recovery`); the boot ramdisk only overrides that list
+(`recovery/root/lib/modules/`).
