@@ -21,48 +21,88 @@ jobs:
     env:
       DEVICE: xpeng
       DEVICE_PATH: device/motorola/xpeng
-      FOX_DIR: fox
+      FOX_DIR: /home/runner/build/fox
     steps:
-      - name: Free disk space (merge / and /mnt)
-        uses: easimon/maximize-build-space@v10
-        with:
-          root-reserve-mb: 4096
-          swap-size-mb: 8192
-          remove-dotnet: "true"
-          remove-android: "true"
-          remove-haskell: "true"
-          remove-codeql: "true"
-          remove-docker-images: "true"
+      # Same cleanup as the OrangeFox Actions builders (Actions-Build-OrangeFox):
+      # removes the preinstalled SDKs/toolchains/docker images from /.
+      - name: Free disk space
+        uses: rokibhasansagar/slimhub_actions@main
+
+      - name: Show free space
+        run: df -h / /mnt || true
+
+      # The runner's own logs live on /: keep a real reserve there. The source
+      # and out/ go to /home/runner/build, an LVM volume made from the free
+      # space of / (minus ROOT_RESERVE_GB) and of /mnt.
+      - name: Create the build volume
+        env:
+          ROOT_RESERVE_GB: 12
+          MNT_RESERVE_GB: 1
+          SWAP_GB: 8
+        run: |
+          set -e
+          command -v pvcreate >/dev/null || { sudo apt-get update; sudo apt-get install -y lvm2; }
+          sudo swapoff -a || true
+          sudo rm -f /swapfile /mnt/swapfile
+          root_free_mb=$(( $(df --output=avail -k / | tail -1) / 1024 ))
+          root_mb=$(( root_free_mb - ROOT_RESERVE_GB * 1024 ))
+          sudo fallocate -l "${root_mb}M" /pv-root.img
+          pvs="$(sudo losetup --find --show /pv-root.img)"
+          # /mnt is the runner's temporary disk when it is a separate filesystem
+          if [ "$(findmnt -n -o SOURCE /mnt)" != "$(findmnt -n -o SOURCE /)" ] && [ -n "$(findmnt -n -o SOURCE /mnt)" ]; then
+            mnt_free_mb=$(( $(df --output=avail -k /mnt | tail -1) / 1024 ))
+            mnt_mb=$(( mnt_free_mb - MNT_RESERVE_GB * 1024 ))
+            if [ "$mnt_mb" -gt 2048 ]; then
+              sudo fallocate -l "${mnt_mb}M" /mnt/pv-tmp.img
+              pvs="$pvs $(sudo losetup --find --show /mnt/pv-tmp.img)"
+            fi
+          fi
+          sudo pvcreate -f $pvs
+          sudo vgcreate buildvg $pvs
+          sudo lvcreate -L "${SWAP_GB}G" -n swap buildvg
+          sudo mkswap /dev/buildvg/swap && sudo swapon /dev/buildvg/swap
+          sudo lvcreate -l 100%FREE -n build buildvg
+          sudo mkfs.ext4 -q -m0 -E nodiscard,lazy_itable_init=1 /dev/buildvg/build
+          sudo mkdir -p /home/runner/build
+          sudo mount -o noatime /dev/buildvg/build /home/runner/build
+          sudo chown "$(id -u):$(id -g)" /home/runner/build
+          mkdir -p /home/runner/build/tmp
+          echo "BUILD_ROOT=/home/runner/build" >> "$GITHUB_ENV"
+          echo "TMPDIR=/home/runner/build/tmp" >> "$GITHUB_ENV"
+          df -h / /mnt /home/runner/build
 
       - name: Check out the device tree
         uses: actions/checkout@v4
         with:
           path: device-tree
 
+      # OrangeFox's own build environment script (as Actions-Build-OrangeFox)
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache curl flex \
-            g++-multilib gcc-multilib git git-lfs gnupg gperf imagemagick \
-            lib32readline-dev lib32z1-dev libelf-dev liblz4-tool lz4 \
-            libncurses5 libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop \
-            pngcrush python3 python-is-python3 rsync schedtool squashfs-tools \
-            xsltproc zip zlib1g-dev
-          mkdir -p "$HOME/bin"
-          curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
-          chmod a+x "$HOME/bin/repo"
-          echo "$HOME/bin" >> "$GITHUB_PATH"
-          git config --global user.name "github-actions"
-          git config --global user.email "github-actions@users.noreply.github.com"
+          sudo apt-get install -y aria2 rsync
+          cd "$BUILD_ROOT"
+          git clone --depth=1 https://gitlab.com/OrangeFox/misc/scripts.git -b master fox-scripts
+          cd fox-scripts
+          sudo bash setup/android_build_env.sh
+          command -v repo || {
+            mkdir -p "$HOME/bin"
+            curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
+            chmod a+x "$HOME/bin/repo"
+            echo "$HOME/bin" >> "$GITHUB_PATH"
+          }
+          git config --global user.name "${{ github.actor }}"
+          git config --global user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
           git config --global color.ui false
-          df -h .
+          df -h / "$BUILD_ROOT"
 
       - name: Sync OrangeFox fox_${{ inputs.fox_branch }}
         run: |
+          cd "$BUILD_ROOT"
           git clone --depth=1 https://gitlab.com/OrangeFox/sync.git fox-sync
           cd fox-sync
-          ./orangefox_sync.sh --branch "${{ inputs.fox_branch }}" --path "$GITHUB_WORKSPACE/$FOX_DIR"
-          df -h "$GITHUB_WORKSPACE"
+          ./orangefox_sync.sh --branch "${{ inputs.fox_branch }}" --path "$FOX_DIR"
+          df -h / "$BUILD_ROOT"
 
       - name: Place the device tree and its dependencies
         run: |
@@ -107,9 +147,9 @@ jobs:
             || lunch "twrp_${DEVICE}-bp2a-${{ inputs.build_type }}" \
             || lunch "twrp_${DEVICE}-ap2a-${{ inputs.build_type }}" \
             || { echo "::error::lunch failed"; exit 1; }
-          mka adbd bootimage -j"$(nproc)" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          mka adbd bootimage -j"$(nproc)" 2>&1 | tee "$BUILD_ROOT/build.log"
           rc=${PIPESTATUS[0]}
-          df -h "$GITHUB_WORKSPACE"
+          df -h / "$BUILD_ROOT"
           exit "$rc"
 
       - name: Collect output
@@ -118,7 +158,8 @@ jobs:
           mkdir -p out-files
           OUTDIR="$FOX_DIR/out/target/product/$DEVICE"
           cp -v "$OUTDIR"/OrangeFox*.img "$OUTDIR"/OrangeFox*.zip "$OUTDIR"/boot.img out-files/ 2>/dev/null || true
-          cp -v "$GITHUB_WORKSPACE/build.log" out-files/ 2>/dev/null || true
+          cp -v "$BUILD_ROOT/build.log" out-files/ 2>/dev/null || true
+          df -h / "$BUILD_ROOT" > out-files/df.txt 2>&1 || true
           cp -v "$FOX_DIR/out/error.log" out-files/ 2>/dev/null || true
           ls -la out-files
 
