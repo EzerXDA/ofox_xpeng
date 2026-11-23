@@ -197,7 +197,7 @@ endif
 # TWRP Configuration
 _empty :=
 _space := $(_empty) $(_empty)
-TW_DEVICE_VERSION := 0_5.10_by$(_space)LuoJuly
+TW_DEVICE_VERSION := 0_5.10_by$(_space)AURAXX
 TW_THEME := portrait_hdpi
 TW_EXTRA_LANGUAGES := false
 # Keep screen on at boot so a failed touch/display bring-up is not mistaken for a
