@@ -2,19 +2,17 @@
 #
 # Load display stack as early as possible (before TWRP GUI).
 # msm_drm is modular on lahaina; without it recovery has no /dev/dri → black screen.
-# msm_drm.ko stays on vendor_boot (/lib/modules, ~3.9MiB); other kos ship in
-# boot ramdisk under /vendor/lib/modules.
+# 5.10: first-stage init already loads these from vendor_boot /lib/modules
+# (modules.load.recovery); this is only a fallback, so an already-loaded
+# module just fails with EEXIST. No insmod -f: the kos match the kernel.
 #
 # Do not wait/loop here: this script is exec'd from on early-boot and blocks
 # init (no recovery GUI, no enable_adb) until it returns.
 #
 
 load() {
-	for MOD in /vendor/lib/modules /lib/modules /sbin/modules; do
-		[ -f "$MOD/$1" ] || continue
-		insmod "$MOD/$1" 2>/dev/null || insmod -f "$MOD/$1" 2>/dev/null || true
-		return 0
-	done
+	[ -f "/lib/modules/$1" ] || return 0
+	insmod "/lib/modules/$1" 2>/dev/null || true
 	return 0
 }
 

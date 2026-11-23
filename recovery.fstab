@@ -1,7 +1,6 @@
-# mount point / device layout — LineageOS 23.2 (Android 16 QPR2) for xpeng
-# Logical partitions: Lineage uses ext4; keep erofs as fallback for other images.
+# mount point / device layout — xpeng 5.10 port (LineageOS 23.2 based)
+# Logical partitions: Lineage uses ext4; the 5.10 port repacks them as erofs.
 # fs_mgr "ro": SHARED_BLOCKS / erofs must stay read-only.
-# No odm: Lineage sm7325-common has no odm mapper.
 system       /system       ext4    ro      wait,slotselect,logical,display="System",backup=1
 system       /system       erofs   ro      wait,slotselect,logical,display="System",backup=1
 system_root  /system       ext4    ro      wait,slotselect,logical,display="System",backup=1
@@ -12,6 +11,9 @@ product      /product      ext4    ro      wait,slotselect,logical,display="Prod
 product      /product      erofs   ro      wait,slotselect,logical,display="Product",backup=1
 vendor       /vendor       ext4    ro      wait,slotselect,logical,display="Vendor",backup=1
 vendor       /vendor       erofs   ro      wait,slotselect,logical,display="Vendor",backup=1
+# 5.10 port: odm + vendor_dlkm logical partitions (erofs)
+odm          /odm          erofs   ro      wait,slotselect,logical,display="ODM",backup=1
+vendor_dlkm  /vendor_dlkm  erofs   ro      wait,slotselect,logical,display="Vendor_dlkm",backup=1
 /metadata       ext4     /dev/block/bootdevice/by-name/metadata     flags=display="Metadata";fsflags="fileencryption=off"
 # Match Lineage fstab.qcom userdata encryption flags
 /data           f2fs     /dev/block/bootdevice/by-name/userdata     flags=fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized+wrappedkey_v0:metadata_encryption=aes-256-xts:wrappedkey_v0,keydirectory=/metadata/vold/metadata_encryption;display="Data"

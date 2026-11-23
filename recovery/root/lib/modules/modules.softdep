@@ -1,0 +1,10 @@
+# Soft dependencies extracted from modules themselves.
+softdep soc_sleep_stats pre: smem
+softdep qmi_helpers pre: qrtr
+softdep smem pre: qcom_hwspinlock
+softdep dwc3_msm pre: phy-generic phy-msm-snps-hs phy-msm-snps-eusb2 phy-msm-ssusb-qmp eud post: ucsi_glink
+softdep pinctrl_msm pre: qcom-pdc
+# xpeng recovery: the remoteprocs must exist before xpeng_rproc_boot looks them up
+softdep xpeng_rproc_boot pre: qcom_q6v5_pas
+# xpeng recovery: /dev/ion (ion_compat) allocates from the QTI dma-buf heaps
+softdep ion_compat pre: qcom_dma_heaps

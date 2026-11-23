@@ -50,5 +50,5 @@ PRODUCT_PACKAGES += \
 # Prebuilt recovery bins (magiskboot etc.) may be 4K-aligned
 PRODUCT_CHECK_PREBUILT_MAX_PAGE_SIZE := false
 
-# Kernel 5.4: no UFFD GC
+# No ART in recovery; keep UFFD GC off as on the 5.4 tree
 PRODUCT_ENABLE_UFFD_GC := false

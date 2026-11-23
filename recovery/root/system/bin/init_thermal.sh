@@ -1,13 +1,13 @@
 #!/system/bin/sh
 #
-# LineageOS-style ADSP bring-up + publish CPU temp / battery for TWRP UI.
+# Publish CPU temp / battery for the recovery UI (5.10 kernel).
 #
-# Lineage init.qcom.recovery.rc:
-#   mount modem -> /firmware, then write /sys/kernel/boot_adsp/boot 1,
-#   wait /sys/class/power_supply/battery
-# Health HAL then reads /sys/class/power_supply/battery/capacity.
-#
-# We mirror the firmware/ADSP path and publish capacity for TWRP legacy UI:
+# On 5.10 the whole ADSP/battery stack (qcom_q6v5_pas, pmic_glink,
+# qti_battery_charger_main, xpeng_rproc_boot) is loaded by first-stage init
+# from vendor_boot (/lib/modules/modules.load.recovery). init.recovery.qcom.rc
+# mounts the modem partition at /vendor/firmware_mnt (firmware_class.path) on
+# fs and writes /sys/kernel/boot_adsp/boot on post-fs. This script only boots
+# the ADSP as a fallback and publishes capacity for the legacy battery UI:
 #   TW_CUSTOM_CPU_TEMP_PATH=/tmp/twrp_cpu_temp
 #   TW_CUSTOM_BATTERY_PATH=/tmp/twrp_battery
 #
@@ -18,20 +18,11 @@ if [ -f /tmp/init_thermal.lock ]; then
 fi
 echo $$ > /tmp/init_thermal.lock
 
-MODULE_PATH=/vendor/lib/modules
-[ -d "$MODULE_PATH" ] || MODULE_PATH=/lib/modules
-[ -d "$MODULE_PATH" ] || MODULE_PATH=/sbin/modules
+FW_MNT=/vendor/firmware_mnt
 TEMP_FILE=/tmp/twrp_cpu_temp
 BATT_DIR=/tmp/twrp_battery
 BATT_CAP=$BATT_DIR/capacity
 BATT_STAT=$BATT_DIR/status
-
-load() {
-	[ -f "$MODULE_PATH/$1" ] || return 0
-	insmod "$MODULE_PATH/$1" 2>/dev/null \
-		|| insmod -f "$MODULE_PATH/$1" 2>/dev/null \
-		|| true
-}
 
 wait_for() {
 	_path=$1
@@ -44,21 +35,35 @@ wait_for() {
 	[ -e "$_path" ]
 }
 
-# Lineage: ADSP PIL firmware is on the modem partition at /firmware
+# ADSP firmware is on the modem partition, mounted where firmware_class.path
+# points (/vendor/firmware_mnt/image).
 ensure_modem_firmware() {
 	# Already mounted by init.recovery.qcom.rc?
-	if mountpoint -q /firmware 2>/dev/null || grep -q ' /firmware ' /proc/mounts 2>/dev/null; then
+	if grep -q " $FW_MNT " /proc/mounts 2>/dev/null; then
 		return 0
 	fi
 	slot=$(getprop ro.boot.slot_suffix)
-	mkdir -p /firmware
+	mkdir -p "$FW_MNT"
 	for node in \
 		"/dev/block/bootdevice/by-name/modem${slot}" \
 		"/dev/block/by-name/modem${slot}"
 	do
 		if [ -e "$node" ]; then
-			mount -t ext4 -o ro "$node" /firmware 2>/dev/null && return 0
+			mount -t ext4 -o ro "$node" "$FW_MNT" 2>/dev/null && return 0
 		fi
+	done
+	return 1
+}
+
+# True when the ADSP remoteproc reports "running".
+adsp_running() {
+	for _r in /sys/class/remoteproc/remoteproc*; do
+		[ -r "$_r/name" ] || continue
+		case "$(cat "$_r/name" 2>/dev/null)" in
+			*adsp*)
+				[ "$(cat "$_r/state" 2>/dev/null)" = "running" ] && return 0
+				;;
+		esac
 	done
 	return 1
 }
@@ -287,32 +292,19 @@ mkdir -p /tmp "$BATT_DIR"
 [ -f "$BATT_CAP" ] || echo 1 > "$BATT_CAP"
 [ -f "$BATT_STAT" ] || echo Discharging > "$BATT_STAT"
 
-# Modem firmware must be present before booting ADSP (Lineage path)
-ensure_modem_firmware
-# Wait a bit for init.rc mount if we raced ahead of on fs
+# Modem firmware must be present before booting the ADSP
 _i=0
 while [ "$_i" -lt 50 ]; do
-	grep -q ' /firmware ' /proc/mounts 2>/dev/null && break
 	ensure_modem_firmware && break
 	sleep 0.1
 	_i=$((_i + 1))
 done
 
-# ADSP stack (battery SOC via pmic glink needs ADSP)
-load q6_pdr_dlkm.ko
-load q6_notifier_dlkm.ko
-load snd_event_dlkm.ko
-load apr_dlkm.ko
-load adsp_loader_dlkm.ko
-# Moto charger helpers (optional; built-in qti_battery_charger is primary)
-load mmi_info.ko
-load bm_adsp_ulog.ko
-load mmi_charger.ko
-load qti_glink_charger.ko
-
-# Lineage: write /sys/kernel/boot_adsp/boot 1 ; wait battery
-if wait_for /sys/kernel/boot_adsp/boot 80; then
-	echo 1 > /sys/kernel/boot_adsp/boot
+# Fallback only: init.recovery.qcom.rc boots the ADSP on post-fs. Writing
+# boot_adsp again while it runs would just take another rproc reference.
+if ! adsp_running && wait_for /sys/kernel/boot_adsp/boot 80; then
+	sleep 1
+	adsp_running || echo 1 > /sys/kernel/boot_adsp/boot
 fi
 wait_for /sys/class/power_supply/battery 100 || true
 # Extra settle for capacity after psy appears

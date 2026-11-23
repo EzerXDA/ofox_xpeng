@@ -135,21 +135,19 @@ rm -rf "$ROOT"/system/etc/microhttpd_webui
 find "$ROOT/system" -name 'me.twrp.twrpapp.apk' -delete
 rm -f "$ROOT/system/etc/permissions/privapp-permissions-twrpapp.xml"
 
-# Keep recovery modules except msm_drm.ko (~3.9MiB) — that stays on vendor_boot
-# /lib/modules. Rest (~1.2MiB) matches vendor_boot 17-module list minus msm_drm
-# (no mmi_sys_temp/utags; those are A12-only extras).
-rm -rf "$ROOT/vendor/lib/modules.bak"
-mkdir -p "$ROOT/vendor/lib"
-if [[ -d "$DT_ROOT/vendor/lib/modules" ]]; then
-  rm -rf "$ROOT/vendor/lib/modules"
-  cp -a "$DT_ROOT/vendor/lib/modules" "$ROOT/vendor/lib/"
-fi
-# Always drop msm_drm from boot ramdisk if a copy slipped in.
-rm -f "$ROOT/vendor/lib/modules/msm_drm.ko"
-# Prefer DT modules; do not leave empty modules dir missing for init_thermal.
-if [[ ! -d "$ROOT/vendor/lib/modules" ]]; then
-  mkdir -p "$ROOT/vendor/lib/modules"
-fi
+# 5.10: no kernel modules in the boot ramdisk. Every recovery ko comes from
+# vendor_boot /lib/modules; the boot ramdisk only ships /lib/modules/
+# modules.load.recovery + modules.softdep, which replace vendor_boot's copies
+# (the boot ramdisk is unpacked after the vendor ramdisk).
+rm -rf "$ROOT/vendor/lib/modules" "$ROOT/vendor/lib/modules.bak"
+find "$ROOT/lib/modules" -name '*.ko' -delete 2>/dev/null || true
+mkdir -p "$ROOT/lib/modules"
+for f in modules.load.recovery modules.softdep; do
+  if [[ -f "$DT_ROOT/lib/modules/$f" ]]; then
+    cp -f "$DT_ROOT/lib/modules/$f" "$ROOT/lib/modules/$f"
+    chmod 0644 "$ROOT/lib/modules/$f"
+  fi
+done
 
 if [[ -d "$DT_ROOT/vendor/firmware" ]]; then
   rm -rf "$ROOT/vendor/firmware"

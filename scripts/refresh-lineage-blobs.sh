@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Refresh prebuilt kernel / modules / crypto blobs from LineageOS 23.2 images.
+# Refresh prebuilt kernel / dtb / dtbo from the xpeng 5.10 port images.
 # Usage:
 #   ./scripts/refresh-lineage-blobs.sh /path/to/lineage-23.2-*-xpeng-signed.zip
 #   ./scripts/refresh-lineage-blobs.sh --boot boot.img --vendor-boot vendor_boot.img [--dtbo dtbo.img]
@@ -74,13 +74,17 @@ cp -f "$WORK/boot/kernel" "$ROOT/prebuilt/kernel"
 [[ -f "$WORK/vboot/dtb" ]] && cp -f "$WORK/vboot/dtb" "$ROOT/prebuilt/dtb"
 [[ -n "$DTBO" && -f "$DTBO" ]] && cp -f "$DTBO" "$ROOT/prebuilt/dtbo.img"
 
-mkdir -p "$ROOT/recovery/root/vendor/lib/modules"
-rm -f "$ROOT/recovery/root/vendor/lib/modules/"*.ko
-cp -a "$WORK/vboot/ramdisk/lib/modules/"*.ko \
-      "$WORK/vboot/ramdisk/lib/modules/modules."* \
-      "$ROOT/recovery/root/vendor/lib/modules/"
+# 5.10: modules stay on vendor_boot. Only check that every module named in our
+# modules.load.recovery override exists in this vendor_boot.
+LIST="$ROOT/recovery/root/lib/modules/modules.load.recovery"
+if [[ -f "$LIST" ]]; then
+  while read -r m; do
+    [[ -z "$m" ]] && continue
+    [[ -f "$WORK/vboot/ramdisk/lib/modules/$m" ]] || echo "WARNING: $m not in vendor_boot" >&2
+  done < "$LIST"
+fi
 
-echo "Updated kernel + modules. Re-extract vendor crypto blobs manually if keymaster changes:"
+echo "Updated kernel/dtb/dtbo. Re-extract vendor crypto blobs manually if keymaster changes:"
 echo "  debugfs -R 'dump /bin/qseecomd ...' vendor.img"
 strings "$ROOT/prebuilt/kernel" | grep -o 'Linux version [^ ]*' | head -1
-strings "$ROOT/recovery/root/vendor/lib/modules/nova_0flash_mmi.ko" | grep -o 'vermagic=[^ ]*' | head -1
+strings "$WORK/vboot/ramdisk/lib/modules/nova_0flash_mmi.ko" | grep -o 'vermagic=[^ ]*' | head -1

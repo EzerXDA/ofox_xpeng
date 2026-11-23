@@ -20,7 +20,8 @@ on init
     mkdir /tmp 0777
     write /tmp/twrp_cpu_temp 0
     mkdir /tmp/twrp_battery 0755
-    # Temporary seed only (1%); init_thermal replaces with FG SOC after ADSP
+    # Temporary seed only (1%); init_thermal replaces it with the fuel gauge
+    # SOC once the ADSP (battery/charger firmware) is up
     write /tmp/twrp_battery/capacity 1
     write /tmp/twrp_battery/status Discharging
     # LineageOS: enable configfs USB; leave gadget creation to init.rc on fs
@@ -32,8 +33,9 @@ on init
     setprop prepdecrypt.setpatch false
 
 # Bring up panel before class_start default launches /system/bin/recovery.
-# First-stage already loads vendor_boot modules.load.recovery (msm_drm); this
-# is a sync fallback from our ramdisk copy if first-stage skipped/failed.
+# First-stage init already loads msm_drm and touch from the 5.10 vendor_boot
+# (/lib/modules/modules.load.recovery, overridden by this ramdisk); this is a
+# sync fallback in case first-stage skipped them.
 on early-boot
     exec -- /system/bin/load_display.sh
     wait /dev/dri/card0 10
@@ -57,22 +59,29 @@ on fs
     # Bring up TEE/keymaster before recovery Decrypt_Data (needs libion in ramdisk)
     start ensure_decrypt
 
-    # LineageOS: ADSP/PMIC firmware lives on modem, not vendor
-    mkdir /firmware
-    mount ext4 /dev/block/bootdevice/by-name/modem${ro.boot.slot_suffix} /firmware ro
+    # ADSP/PMIC firmware lives on the modem partition. The 5.10 kernel reads
+    # firmware only from firmware_class.path (/vendor/firmware_mnt/image) and
+    # /lib/firmware: it has no user-helper fallback, so mount it where the
+    # kernel looks, as Android does.
+    mkdir /vendor/firmware_mnt
+    mount ext4 /dev/block/bootdevice/by-name/modem${ro.boot.slot_suffix} /vendor/firmware_mnt ro context=u:object_r:firmware_file:s0
 
     # Persist a mark so we can see from Android whether TWRP second-stage ran
     mkdir /cache
     mount ext4 /dev/block/bootdevice/by-name/cache /cache rw
     exec -- /system/bin/twrp_boot_mark.sh
 
-# Firmware mounted → load ADSP modules + boot ADSP + publish battery/temp
-on property:dev.mnt.blk.firmware=*
+# Boot the ADSP (battery fuel gauge + charger) once the firmware is mounted.
+# /sys/kernel/boot_adsp comes from xpeng_rproc_boot.ko, loaded in first stage
+# with qcom_q6v5_pas, pmic_glink and qti_battery_charger_main.
+on post-fs
+    wait /sys/kernel/boot_adsp/boot
+    write /sys/kernel/boot_adsp/boot 1
     start init_thermal
 
 on boot
     start set_permissive
-    # Fallback if firmware mount property did not fire
+    # Fallback if post-fs did not start it (oneshot + lock file: runs once)
     start init_thermal
     # Async touch firmware / second pass (display already waited on early-boot)
     start load_display
