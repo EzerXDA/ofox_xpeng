@@ -8,6 +8,7 @@
 PRODUCT_MAKEFILES := \
     $(LOCAL_DIR)/twrp_xpeng.mk
 
+# product-variant lunch, as the official OrangeFox garnet fox_16.0 tree
 COMMON_LUNCH_CHOICES := \
     twrp_xpeng-eng \
     twrp_xpeng-userdebug \

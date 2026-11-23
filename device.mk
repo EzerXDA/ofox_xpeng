@@ -42,9 +42,10 @@ PRODUCT_PACKAGES += \
     qcom_decrypt \
     qcom_decrypt_fbe
 
-# QTI AIDL vibrator HAL (copied into recovery via BoardConfig RECOVERY_*_SOURCE_FILES)
+# QTI AIDL vibrator HAL: shipped as prebuilts in recovery/root (as the official
+# OrangeFox garnet fox_16.0 tree does), so the build does not depend on
+# vendor/qcom/opensource/vibrator being in the OrangeFox manifest.
 PRODUCT_PACKAGES += \
-    vendor.qti.hardware.vibrator.service \
     libexpat
 
 # Prebuilt recovery bins (magiskboot etc.) may be 4K-aligned

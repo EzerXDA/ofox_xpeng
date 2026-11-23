@@ -1,0 +1,131 @@
+name: OrangeFox - xpeng (5.10)
+
+on:
+  workflow_dispatch:
+    inputs:
+      fox_branch:
+        description: "OrangeFox source branch (this tree targets 16.0)"
+        required: true
+        default: "16.0"
+      build_type:
+        description: "Lunch variant"
+        required: true
+        default: "eng"
+        type: choice
+        options: [eng, userdebug, user]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    env:
+      DEVICE: xpeng
+      DEVICE_PATH: device/motorola/xpeng
+      FOX_DIR: fox
+    steps:
+      - name: Free disk space (merge / and /mnt)
+        uses: easimon/maximize-build-space@v10
+        with:
+          root-reserve-mb: 4096
+          swap-size-mb: 8192
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+
+      - name: Check out the device tree
+        uses: actions/checkout@v4
+        with:
+          path: device-tree
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache curl flex \
+            g++-multilib gcc-multilib git git-lfs gnupg gperf imagemagick \
+            lib32readline-dev lib32z1-dev libelf-dev liblz4-tool lz4 \
+            libncurses5 libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop \
+            pngcrush python3 python-is-python3 rsync schedtool squashfs-tools \
+            xsltproc zip zlib1g-dev
+          mkdir -p "$HOME/bin"
+          curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
+          chmod a+x "$HOME/bin/repo"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@users.noreply.github.com"
+          git config --global color.ui false
+          df -h .
+
+      - name: Sync OrangeFox fox_${{ inputs.fox_branch }}
+        run: |
+          git clone --depth=1 https://gitlab.com/OrangeFox/sync.git fox-sync
+          cd fox-sync
+          ./orangefox_sync.sh --branch "${{ inputs.fox_branch }}" --path "$GITHUB_WORKSPACE/$FOX_DIR"
+          df -h "$GITHUB_WORKSPACE"
+
+      - name: Place the device tree and its dependencies
+        run: |
+          cd "$FOX_DIR"
+          mkdir -p "$DEVICE_PATH"
+          # Soong cannot follow a symlinked device dir: copy it
+          rsync -a --delete --exclude .git --exclude .github \
+            "$GITHUB_WORKSPACE/device-tree/" "$DEVICE_PATH/"
+
+          # twrp.dependencies (OrangeFox does not fetch them on lunch)
+          case "${{ inputs.fox_branch }}" in
+            12.1) TWRP_COMMON_BRANCH=android-12.1 ;;
+            *)    TWRP_COMMON_BRANCH=android-14 ;;
+          esac
+          [ -d device/qcom/twrp-common ] || git clone --depth=1 -b "$TWRP_COMMON_BRANCH" \
+            https://github.com/TeamWin/android_device_qcom_twrp-common device/qcom/twrp-common
+          [ -d device/qcom/common ] || git clone --depth=1 -b android-12.1 \
+            https://github.com/TeamWin/android_device_qcom_common device/qcom/common
+
+          # Dual-LUN bootctrl: commit the backup GPT too (required for slot switch)
+          patch -d device/qcom/common -p1 --forward \
+            < "$DEVICE_PATH/patches/gpt-utils/0007-commit-backup-gpt.patch" \
+            || echo "::warning::gpt-utils patch did not apply"
+          # update_engine AIDL client fix: only exists on Android 14+
+          if [ -d hardware/interfaces/boot/aidl/client ]; then
+            patch -d hardware/interfaces/boot -p1 --forward \
+              < "$DEVICE_PATH/patches/hardware/0006-bootcontrol-tryGetService.patch" \
+              || echo "::warning::bootcontrol client patch did not apply"
+          fi
+          # patches/00*.patch target TWRP twrp-16.0 bootable/recovery; OrangeFox
+          # has its own bootable/recovery, so they are not applied here.
+
+      - name: Build OrangeFox (recovery-as-boot)
+        run: |
+          cd "$FOX_DIR"
+          export FOX_BUILD_DEVICE="$DEVICE"
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export LC_ALL=C
+          set +e
+          source build/envsetup.sh
+          lunch "twrp_${DEVICE}-${{ inputs.build_type }}" \
+            || lunch "twrp_${DEVICE}-bp2a-${{ inputs.build_type }}" \
+            || lunch "twrp_${DEVICE}-ap2a-${{ inputs.build_type }}" \
+            || { echo "::error::lunch failed"; exit 1; }
+          mka adbd bootimage -j"$(nproc)" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          rc=${PIPESTATUS[0]}
+          df -h "$GITHUB_WORKSPACE"
+          exit "$rc"
+
+      - name: Collect output
+        if: always()
+        run: |
+          mkdir -p out-files
+          OUTDIR="$FOX_DIR/out/target/product/$DEVICE"
+          cp -v "$OUTDIR"/OrangeFox*.img "$OUTDIR"/OrangeFox*.zip "$OUTDIR"/boot.img out-files/ 2>/dev/null || true
+          cp -v "$GITHUB_WORKSPACE/build.log" out-files/ 2>/dev/null || true
+          cp -v "$FOX_DIR/out/error.log" out-files/ 2>/dev/null || true
+          ls -la out-files
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-${{ env.DEVICE }}-${{ github.run_number }}
+          path: out-files/
+          if-no-files-found: warn

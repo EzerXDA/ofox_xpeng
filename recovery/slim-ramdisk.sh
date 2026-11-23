@@ -18,15 +18,8 @@ else
 fi
 DT_ROOT="$(cd "$(dirname "$0")/root" && pwd)"
 
-mkdir -p "$ROOT/twres/languages" "$ROOT/twres/fonts"
-cp -f "$DT_ROOT/twres/languages/en.xml" "$ROOT/twres/languages/"
-cp -f "$DT_ROOT/twres/languages/zh_CN.xml" "$ROOT/twres/languages/"
-cp -f "$DT_ROOT/twres/fonts/DroidSansFallback.ttf" "$ROOT/twres/fonts/"
-find "$ROOT/twres/languages" -type f -name '*.xml' ! -name 'en.xml' ! -name 'zh_CN.xml' -delete
-find "$ROOT/twres/fonts" -type f \( -name 'NotoSans*.ttf' -o -name 'Sinhala.ttf' -o -name '*.full' \) -delete
-# Drop unused theme fonts / license / editor backups; keep subset Fallback + stock Roboto/Mono.
-rm -f "$ROOT"/twres/fonts/DroidSansFallback.ttf.full \
-  "$ROOT"/twres/fonts/OFL.txt
+# OrangeFox ships its own theme, fonts and language files under /twres:
+# leave them alone (the TWRP-theme en/zh_CN overrides were removed).
 # Never ship backup/editor leftovers into the final cpio (fonts-src stays outside recovery/root).
 find "$ROOT" -type f \( \
   -name '*.full' -o -name '*.bak' -o -name '*.orig' -o -name '*.old' \
@@ -53,8 +46,8 @@ rm -f \
 # inactive slot (TWRP execs /system/bin/update_engine_sideload).
 # Drop update_verifier + fastbootd for Motokernel ramdisk budget.
 # Keep minadbd — TWRP ADB Sideload UI forks /system/bin/minadbd (not adbd).
+# Keep magiskboot: OrangeFox uses it for its boot image features.
 rm -f \
-  "$ROOT"/system/bin/magiskboot \
   "$ROOT"/system/bin/logd \
   "$ROOT"/system/bin/logcat \
   "$ROOT"/system/bin/exfat-fuse \
@@ -81,7 +74,7 @@ if [[ -f "$UE" && -f "$WRAP" ]]; then
 fi
 
 # BootControl for update_engine: AIDL recovery HAL (no /vendor/lib64/hw overlay).
-mkdir -p "$ROOT/system/etc/init" "$ROOT/system/etc/vintf/manifest" "$ROOT/system/bin/hw"
+mkdir -p "$ROOT/system/etc/init" "$ROOT/system/etc/vintf/manifest" "$ROOT/system/bin/hw" "$ROOT/system/bin"
 if [[ -f "$DT_ROOT/system/etc/recovery.fstab.default" ]]; then
   cp -f "$DT_ROOT/system/etc/recovery.fstab.default" "$ROOT/system/etc/recovery.fstab.default"
 fi
@@ -151,6 +144,7 @@ done
 
 if [[ -d "$DT_ROOT/vendor/firmware" ]]; then
   rm -rf "$ROOT/vendor/firmware"
+  mkdir -p "$ROOT/vendor"
   cp -a "$DT_ROOT/vendor/firmware" "$ROOT/vendor/"
 fi
 # Kernel request_firmware searches /lib/firmware after firmware_class.path.

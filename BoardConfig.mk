@@ -5,7 +5,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Recovery for Motorola xpeng on the 5.10 kernel port (LineageOS 23.2 based).
-# Build: OrangeFox fox_14.1 (see README.md / .github/workflows).
+# Build: OrangeFox fox_16.0 (see README.md / .github/workflows).
 #
 
 DEVICE_PATH := device/motorola/xpeng
@@ -160,11 +160,15 @@ BOOT_SECURITY_PATCH := 2099-12-31
 # libs required by qseecomd / keymaster / FBE (recovery links libsysutils when
 # TW_INCLUDE_CRYPTO_FBE, but TWRP only auto-packages it with logd — we disable
 # logd, so ship it explicitly or recovery crashes at start → reboot to system)
+# libion/libnetutils (QSEECom/libdsutils) are built from source, as the
+# official OrangeFox sm84xx-common tree does, instead of prebuilts.
 TARGET_RECOVERY_DEVICE_MODULES += \
     libion \
+    libnetutils \
     libsysutils
 RECOVERY_LIBRARY_SOURCE_FILES += \
     $(TARGET_OUT_SHARED_LIBRARIES)/libion.so \
+    $(TARGET_OUT_SHARED_LIBRARIES)/libnetutils.so \
     $(TARGET_OUT_SHARED_LIBRARIES)/libsysutils.so
 
 # QTI AIDL bootctrl (recovery variant) + AIDL ndk client used by update_engine.
@@ -173,42 +177,46 @@ TARGET_RECOVERY_DEVICE_MODULES += \
 RECOVERY_LIBRARY_SOURCE_FILES += \
     $(TARGET_OUT_SHARED_LIBRARIES)/android.hardware.boot-V1-ndk.so
 
-# QTI AIDL vibrator
+# QTI AIDL vibrator from the tree's prebuilts (recovery/root: service, impl,
+# OL/Sel impls, effect libs; start_vibrator.sh). Set XPENG_HAPTICS := false if
+# haptics break the OrangeFox build (TW_NO_HAPTICS, as the garnet fox_16.0 tree).
+XPENG_HAPTICS ?= true
+ifeq ($(XPENG_HAPTICS),true)
 TW_SUPPORT_INPUT_AIDL_HAPTICS := true
 TW_SUPPORT_INPUT_AIDL_HAPTICS_FIX_OFF := true
 TARGET_RECOVERY_DEVICE_MODULES += \
-    vendor.qti.hardware.vibrator.service \
-    vendor.qti.hardware.vibrator.impl \
-    libqtivibratoreffect
-RECOVERY_BINARY_SOURCE_FILES += \
-    $(TARGET_OUT_VENDOR_EXECUTABLES)/hw/vendor.qti.hardware.vibrator.service
+    android.hardware.vibrator-V2-ndk \
+    libexpat
 RECOVERY_LIBRARY_SOURCE_FILES += \
-    $(TARGET_OUT_VENDOR_SHARED_LIBRARIES)/vendor.qti.hardware.vibrator.impl.so \
-    $(TARGET_OUT_VENDOR_SHARED_LIBRARIES)/libqtivibratoreffect.so \
+    $(TARGET_OUT_SHARED_LIBRARIES)/android.hardware.vibrator-V2-ndk.so \
     $(TARGET_OUT_SHARED_LIBRARIES)/libexpat.so
-# vibrator.impl → vibratorOL.impl needs libqtivibratoreffectoffload.so.
-# twrp-16.0 does not build that module; ship the prebuilt via recovery/root
-# (slim-ramdisk copies it). Without it, HAL dies after Format Data unmaps /vendor.
+else
+TW_NO_HAPTICS := true
+endif
 
 # TWRP Configuration
 _empty :=
 _space := $(_empty) $(_empty)
-TW_DEVICE_VERSION := 0_lineage_by$(_space)LuoJuly
+TW_DEVICE_VERSION := 0_5.10_by$(_space)LuoJuly
 TW_THEME := portrait_hdpi
-# en + zh_CN only (slim-ramdisk.sh); full language pack bloats twres.
 TW_EXTRA_LANGUAGES := false
 # Keep screen on at boot so a failed touch/display bring-up is not mistaken for a
 # dead boot (TW_SCREEN_BLANK_ON_BOOT blanks until first input).
 TW_SCREEN_BLANK_ON_BOOT := false
 TW_INPUT_BLACKLIST := "hbtp_vm"
 TW_USE_TOOLBOX := true
-TW_EXCLUDE_ENCRYPTED_BACKUPS := false
+# Encrypted backups (openaes): needed a C23 patch on the twrp-16.0 source
+# (patches/0011), which OrangeFox's bootable/recovery may lack. Off for now.
+TW_EXCLUDE_ENCRYPTED_BACKUPS := true
 TARGET_RECOVERY_QCOM_RTC_FIX := true
 TW_DEFAULT_TIMEZONE := CST-8
 TW_USE_LEGACY_BATTERY_SERVICES := true
 TW_CUSTOM_BATTERY_PATH := /tmp/twrp_battery
 TW_CUSTOM_CPU_TEMP_PATH := /tmp/twrp_cpu_temp
 BUILD_BROKEN_ELF_PREBUILT_PRODUCT_COPY_FILES := true
+# As the official OrangeFox QTI trees (sm84xx-common fox_12.1 and fox_16.0)
+BUILD_BROKEN_DUP_RULES := true
+TARGET_HAS_GENERIC_KERNEL_HEADERS := true
 
 # Display/touch kos: first-stage vendor_boot (5.10) + load_display.sh fallback.
 # Do NOT set TW_LOAD_VENDOR_MODULES — stock TWRP loader mounts /vendor and
